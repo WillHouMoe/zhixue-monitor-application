@@ -1,0 +1,60 @@
+name: 智学网成绩监控
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'        # 每5分钟触发（UTC时间），定时任务无输入参数
+  workflow_dispatch:
+    inputs:
+      exam_id:
+        description: '📝 考试ID（必填）'
+        required: true
+        default: ''
+      exam_title:
+        description: '📚 考试名称（可选，不填则使用考试ID）'
+        required: false
+        default: ''
+      end_time:
+        description: '⏰ 截止时间（UTC，格式：YYYY-MM-DD HH:MM:SS，留空则取消限制）'
+        required: false
+        default: ''
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: 安装依赖
+        run: pip install requests
+
+      - name: 运行监控脚本
+        env:
+          # 敏感信息从 Secrets 读取（不变）
+          ZHIXUE_XTOKEN: ${{ secrets.ZHIXUE_XTOKEN }}
+          ZHIXUE_TOKEN: ${{ secrets.ZHIXUE_TOKEN }}
+          ZHIXUE_AUTHGUID: ${{ secrets.ZHIXUE_AUTHGUID }}
+          ZHIXUE_AUTHTIMESTAMP: ${{ secrets.ZHIXUE_AUTHTIMESTAMP }}
+          ZHIXUE_AUTHTOKEN: ${{ secrets.ZHIXUE_AUTHTOKEN }}
+          SERVERCHAN_SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}
+          # 考试参数通过输入传入（定时触发时这些变量为空）
+          EXAM_ID: ${{ github.event.inputs.exam_id }}
+          EXAM_TITLE: ${{ github.event.inputs.exam_title }}
+          END_TIME: ${{ github.event.inputs.end_time }}
+        run: python monitor.py
+
+      - name: 提交并推送状态文件
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add state.json
+          git diff --staged --quiet || git commit -m "Update state [skip ci]"
+          git push
