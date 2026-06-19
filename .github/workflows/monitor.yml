@@ -25,11 +25,11 @@ jobs:
       contents: write
 
     steps:
-      # 1. 检出 main 分支（获取监控脚本）
-      - name: 检出代码（main分支）
+      # 1. 检出 master 分支（获取监控脚本）
+      - name: 检出代码（master分支）
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: master
 
       # 2. 从 work 分支拉取历史状态文件（如果存在）
       - name: 拉取历史状态（work分支）
@@ -71,7 +71,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout main
+          git checkout master
           if git show-ref --verify --quiet refs/remotes/origin/work; then
             git push origin --delete work
             echo "✅ work分支已删除"
