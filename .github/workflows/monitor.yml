@@ -2,7 +2,7 @@ name: 智学网成绩监控
 
 on:
   schedule:
-    - cron: '*/5 * * * *'        # 每5分钟触发（UTC时间），定时任务无输入参数
+    - cron: '*/5 * * * *'        # 每5分钟触发（UTC时间）
   workflow_dispatch:
     inputs:
       exam_id:
@@ -25,36 +25,89 @@ jobs:
       contents: write
 
     steps:
-      - name: 检出代码
+      # 1. 检出 main 分支（获取监控脚本）
+      - name: 检出代码（main分支）
         uses: actions/checkout@v4
+        with:
+          ref: main
 
+      # 2. 从 work 分支拉取历史状态文件（如果存在）
+      - name: 拉取历史状态（work分支）
+        run: |
+          git fetch origin work || true
+          if git show-ref --verify --quiet refs/remotes/origin/work; then
+            git checkout origin/work -- state.json 2>/dev/null || echo "ℹ️ work分支中暂无 state.json"
+          else
+            echo "ℹ️ work分支尚未创建"
+          fi
+
+      # 3. 设置 Python
       - name: 设置 Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
+      # 4. 安装依赖
       - name: 安装依赖
         run: pip install requests
 
+      # 5. 运行监控脚本（会读写当前目录的 state.json，过期时生成 .expired）
       - name: 运行监控脚本
         env:
-          # 敏感信息从 Secrets 读取（不变）
           ZHIXUE_XTOKEN: ${{ secrets.ZHIXUE_XTOKEN }}
           ZHIXUE_TOKEN: ${{ secrets.ZHIXUE_TOKEN }}
           ZHIXUE_AUTHGUID: ${{ secrets.ZHIXUE_AUTHGUID }}
           ZHIXUE_AUTHTIMESTAMP: ${{ secrets.ZHIXUE_AUTHTIMESTAMP }}
           ZHIXUE_AUTHTOKEN: ${{ secrets.ZHIXUE_AUTHTOKEN }}
           SERVERCHAN_SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}
-          # 考试参数通过输入传入（定时触发时这些变量为空）
           EXAM_ID: ${{ github.event.inputs.exam_id }}
           EXAM_TITLE: ${{ github.event.inputs.exam_title }}
           END_TIME: ${{ github.event.inputs.end_time }}
         run: python monitor.py
 
-      - name: 提交并推送状态文件
+      # 6. 如果脚本生成了 .expired 文件，说明监控已自动终止，删除 work 分支
+      - name: 删除 work 分支（监控已停止）
+        if: hashFiles('.expired') != ''
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout main
+          if git show-ref --verify --quiet refs/remotes/origin/work; then
+            git push origin --delete work
+            echo "✅ work分支已删除"
+          else
+            echo "ℹ️ work分支不存在，跳过删除"
+          fi
+
+      # 7. 如果未过期，则推送 state.json 到 work 分支（创建或更新）
+      - name: 推送状态文件到 work 分支（监控运行中）
+        if: hashFiles('.expired') == ''
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if [ ! -f state.json ]; then
+            echo "⚠️ state.json 不存在，跳过推送"
+            exit 0
+          fi
+          cp state.json /tmp/state.json
+          git fetch origin work || true
+          if git show-ref --verify --quiet refs/remotes/origin/work; then
+            git checkout work
+            git pull origin work --rebase
+          else
+            # 创建孤立分支（不含任何历史文件）
+            git checkout --orphan work
+            git rm -rf . || true
+            echo "# Work branch for state files" > README.md
+            git add README.md
+            git commit -m "Initialize work branch"
+          fi
+          cp /tmp/state.json .
           git add state.json
-          git diff --staged --quiet || git commit -m "Update state [skip ci]"
-          git push
+          if git diff --staged --quiet; then
+            echo "ℹ️ state.json 无变化，无需提交"
+          else
+            git commit -m "Update state [skip ci]"
+            git push origin work
+            echo "✅ state.json 已推送到 work 分支"
+          fi

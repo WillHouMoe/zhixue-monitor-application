@@ -160,8 +160,6 @@ def main():
         # 手动运行，明确指定了 exam_id
         exam_id = input_exam_id
         exam_title = input_exam_title if input_exam_title else exam_id
-        # 更新存储的考试信息
-        # 注意：我们稍后会保存，但先存下来以便后续使用
         new_exam_id = exam_id
         new_exam_title = exam_title
     else:
@@ -172,8 +170,8 @@ def main():
             new_exam_id = saved_exam_id
             new_exam_title = saved_exam_title
         else:
-            print("❌ 未提供考试ID，且历史状态中没有考试信息。请手动运行并传入 exam_id。")
-            sys.exit(1)
+            print("ℹ️ 未提供考试ID，且历史状态中没有考试信息。请手动运行并传入 exam_id。")
+            sys.exit(0)   # 正常退出，不触发错误
 
     # ---------- 4. 处理截止时间 ----------
     # 如果本次输入了 end_time（包括空字符串），则使用它更新；否则保留原值
@@ -190,7 +188,9 @@ def main():
             if now_utc > end_dt:
                 print(f"⏰ 当前时间 {now_utc.strftime('%Y-%m-%d %H:%M:%S')} UTC 已超过截止时间 {new_end_time} UTC")
                 print("🛑 监控已自动停止，本次不执行任何操作。")
-                # 仍然保存状态（可能没有变化），但退出
+                # 创建过期标记文件，通知 workflow 删除 work 分支
+                with open(".expired", "w") as f:
+                    f.write("expired")
                 sys.exit(0)
             else:
                 print(f"✅ 当前时间 {now_utc.strftime('%Y-%m-%d %H:%M:%S')} UTC，未到截止时间，继续运行。")
@@ -288,7 +288,6 @@ def main():
         print("ℹ️ 首次运行，仅发送启动通知。")
 
     # ---------- 8. 保存状态 ----------
-    # 保存时注意保留考试信息和截止时间（如果有更新则用新的）
     save_state(current_scores, new_end_time, new_exam_id, new_exam_title)
     print("💾 状态已保存到 state.json。")
 
