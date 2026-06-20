@@ -2,7 +2,9 @@ name: 智学网成绩监控
 
 on:
   schedule:
-    - cron: '*/5 * * * *'        # 每5分钟触发（UTC时间）
+    # 错开整点，避免排队拥堵（每5分钟，但避开 :00, :05, :10 等整点）
+    # UTC 时间，北京时间 = UTC + 8 小时
+    - cron: '3,8,13,18,23,28,33,38,43,48,53,58 * * * *'
   workflow_dispatch:
     inputs:
       exam_id:
@@ -22,16 +24,20 @@ jobs:
   check:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write  # 允许推送代码、创建/删除分支
 
     steps:
-      # 1. 检出 master 分支（获取监控脚本）
+      # ==================== 调试：打印当前时间 ====================
+      - name: 打印当前 UTC 时间
+        run: date -u
+
+      # ==================== 检出代码（master 分支） ====================
       - name: 检出代码（master分支）
         uses: actions/checkout@v4
         with:
           ref: master
 
-      # 2. 从 work 分支拉取历史状态文件（如果存在）
+      # ==================== 拉取历史状态（从 work 分支） ====================
       - name: 拉取历史状态（work分支）
         run: |
           git fetch origin work || true
@@ -41,17 +47,17 @@ jobs:
             echo "ℹ️ work分支尚未创建"
           fi
 
-      # 3. 设置 Python
+      # ==================== 设置 Python 环境 ====================
       - name: 设置 Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      # 4. 安装依赖
+      # ==================== 安装依赖 ====================
       - name: 安装依赖
         run: pip install requests
 
-      # 5. 运行监控脚本（会读写当前目录的 state.json，过期时生成 .expired）
+      # ==================== 运行监控脚本 ====================
       - name: 运行监控脚本
         env:
           ZHIXUE_XTOKEN: ${{ secrets.ZHIXUE_XTOKEN }}
@@ -65,7 +71,7 @@ jobs:
           END_TIME: ${{ github.event.inputs.end_time }}
         run: python monitor.py
 
-      # 6. 如果脚本生成了 .expired 文件，说明监控已自动终止，删除 work 分支
+      # ==================== 如果已过期，删除 work 分支 ====================
       - name: 删除 work 分支（监控已停止）
         if: hashFiles('.expired') != ''
         run: |
@@ -79,29 +85,38 @@ jobs:
             echo "ℹ️ work分支不存在，跳过删除"
           fi
 
-      # 7. 如果未过期，则推送 state.json 到 work 分支（创建或更新）
+      # ==================== 如果未过期，推送状态到 work 分支 ====================
       - name: 推送状态文件到 work 分支（监控运行中）
         if: hashFiles('.expired') == ''
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          
           if [ ! -f state.json ]; then
             echo "⚠️ state.json 不存在，跳过推送"
             exit 0
           fi
+          
+          # 1. 备份 state.json 到临时目录
           cp state.json /tmp/state.json
+          
+          # 2. 清除当前工作区的 state.json（避免干扰分支切换）
+          git checkout -- state.json 2>/dev/null || rm -f state.json
+          
+          # 3. 切换到 work 分支（如果不存在则创建）
           git fetch origin work || true
           if git show-ref --verify --quiet refs/remotes/origin/work; then
             git checkout work
-            git pull origin work --rebase
+            git pull origin work --rebase   # 此时工作区干净，可以安全拉取
           else
-            # 创建孤立分支（不含任何历史文件）
             git checkout --orphan work
             git rm -rf . || true
             echo "# Work branch for state files" > README.md
             git add README.md
             git commit -m "Initialize work branch"
           fi
+          
+          # 4. 恢复 state.json 并提交
           cp /tmp/state.json .
           git add state.json
           if git diff --staged --quiet; then
